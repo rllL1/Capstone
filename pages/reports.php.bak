@@ -1,0 +1,1040 @@
+<?php
+include '../config/db.php';
+session_start();
+if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
+
+// Get filter values
+$month = isset($_GET['month']) ? $_GET['month'] : date('m');
+$year = isset($_GET['year']) ? $_GET['year'] : date('Y');
+$department = isset($_GET['department']) ? $_GET['department'] : '';
+
+// Get departments for filter and their data
+$departments = $conn->query("SELECT d.id, d.name as department, 
+    COUNT(DISTINCT e.id) as emp_count,
+    SUM(p.net_pay) as dept_total 
+    FROM departments d 
+    LEFT JOIN employees e ON d.id = e.department
+    LEFT JOIN payrolls p ON e.id = p.emp_id AND MONTH(p.pay_date) = $month AND YEAR(p.pay_date) = $year
+    GROUP BY d.id ORDER BY d.name");
+
+// Store department data for charts
+$deptLabels = [];
+$deptCounts = [];
+$deptTotals = [];
+while ($d = $departments->fetch_assoc()) {
+    $deptLabels[] = $d['department'];
+    $deptCounts[] = $d['emp_count'];
+    $deptTotals[] = $d['dept_total'] ?? 0;
+}
+$departments->data_seek(0);
+
+// Calculate overall totals with proper filters
+$totals_sql = "
+    SELECT 
+        COUNT(DISTINCT e.id) as total_employees,
+        SUM(p.net_pay) as total_payroll,
+        AVG(p.net_pay) as avg_salary,
+        SUM(p.gross_pay) as total_gross,
+        SUM(p.deductions) as total_deductions,
+        SUM(p.overtime_hours) as total_overtime
+    FROM employees e
+    JOIN payrolls p ON e.id = p.emp_id
+    JOIN departments d ON e.department = d.id
+    WHERE MONTH(p.pay_date) = ? AND YEAR(p.pay_date) = ?
+    " . ($department ? "AND d.id = ?" : "");
+
+$totals_stmt = $conn->prepare($totals_sql);
+
+if ($department) {
+    $totals_stmt->bind_param("iis", $month, $year, $department);
+} else {
+    $totals_stmt->bind_param("ii", $month, $year);
+}
+
+$totals_stmt->execute();
+$totals = $totals_stmt->get_result()->fetch_assoc();
+
+// Prepare weekly payroll data query with proper joins and filters
+$weekly_sql = "
+    SELECT 
+        WEEK(p.pay_date) as week_number,
+        MIN(DATE_FORMAT(p.pay_date, '%b %d')) as week_start,
+        SUM(p.net_pay) as total_pay,
+        COUNT(DISTINCT p.emp_id) as employee_count
+    FROM payrolls p
+    JOIN employees e ON p.emp_id = e.id
+    JOIN departments d ON e.department = d.id
+    WHERE MONTH(p.pay_date) = ? AND YEAR(p.pay_date) = ?
+    " . ($department ? "AND d.id = ?" : "") . "
+    GROUP BY WEEK(p.pay_date)
+    ORDER BY week_number";
+
+$weekly_stmt = $conn->prepare($weekly_sql);
+
+if ($department) {
+    $weekly_stmt->bind_param("iis", $month, $year, $department);
+} else {
+    $weekly_stmt->bind_param("ii", $month, $year);
+}
+
+$weekly_stmt->execute();
+$weekly_data = $weekly_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+
+// Process weekly data for the chart
+$weeks_labels = array();
+$weeks_data = array();
+$weeks_employee_count = array();
+
+foreach ($weekly_data as $week) {
+    $weeks_labels[] = "Week " . date('W', strtotime($week['week_start'])) . "\n" . $week['week_start'];
+    $weeks_data[] = $week['total_pay'];
+    $weeks_employee_count[] = $week['employee_count'];
+}
+
+// If no data, initialize with zeros
+if (empty($weeks_data)) {
+    $weeks_labels = ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'];
+    $weeks_data = array_fill(0, 5, 0);
+    $weeks_employee_count = array_fill(0, 5, 0);
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Reports | Payroll System</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #1e8f4a;
+            --primary-dark: #166c36;
+            --secondary: #6c757d;
+            --light: #f8f9fa;
+            --border: #dee2e6;
+        }
+
+        section.content {
+            padding: 1.5rem;
+            flex: 1;
+        }
+
+        .content-card {
+            background: #fff;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            margin-bottom: 1.5rem;
+            transition: box-shadow 0.3s ease;
+        }
+
+        .page-title {
+            font-size: 1.5rem;
+            color: #2e7d32;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stats-grid, .cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin: 1.5rem 0;
+            width: 100%;
+        }
+
+        .stat-card {
+            background: linear-gradient(145deg, #ffffff, #f8f9fa);
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #e0e0e0;
+            border-left: 4px solid #2e7d32;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            border-color: #2e7d32;
+        }
+
+        .stat-card h4 {
+            margin: 0;
+            color: #1b5e20;
+            font-weight: 600;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stat-card h4 i {
+            font-size: 1.2rem;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(46,125,50,0.15);
+        }
+
+        .stat-card p {
+            margin: 15px 0 5px;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1b5e20;
+            text-shadow: 1px 1px 0 rgba(255,255,255,0.8);
+        }
+
+        .stat-card small {
+            font-size: 0.9rem;
+            color: #66bb6a;
+            font-weight: 500;
+            display: block;
+            margin-top: 5px;
+        }
+
+        .filters-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 2rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            align-items: flex-end;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .filter-group label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .filter-group label i {
+            width: 1.2rem;
+            text-align: center;
+        }
+
+        .form-control {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 0.375rem;
+            width: 100%;
+            font-size: 0.875rem;
+            background-color: #fff;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 0.2rem rgba(30, 143, 74, 0.25);
+        }
+
+        .charts {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .chart-box {
+            background: #ffffff;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: all 0.2s ease;
+            border: 1px solid #e8f5e9;
+        }
+
+        .chart-box:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+
+        .chart-box h4 {
+            margin: 0 0 12px;
+            color: #1b5e20;
+            font-size: 0.95rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e8f5e9;
+        }
+
+        .chart-box h4 i {
+            font-size: 0.9rem;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 8px;
+            border-radius: 8px;
+        }
+
+        .chart-title {
+            color: #2e7d32;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+
+        .reports-table {
+            width: 100%;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+
+        .reports-table th {
+            background: #2e7d32;
+            color: white;
+            padding: 1rem;
+            text-align: left;
+        }
+
+        .reports-table td {
+            padding: 1rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .reports-table tr:hover {
+            background: #f5f5f5;
+        }
+
+        .reports-table tr.highlight-today {
+            background-color: #e8f5e9;
+            animation: highlightFade 2s infinite alternate;
+        }
+
+        .reports-table tr.highlight-today:hover {
+            background-color: #c8e6c9;
+        }
+
+        @keyframes highlightFade {
+            from { background-color: #e8f5e9; }
+            to { background-color: #f1f8e9; }
+        }
+
+        .reports-table td[title] {
+            cursor: help;
+        }
+
+        .reports-table td[title]:hover {
+            background-color: #f5f5f5;
+        }
+
+        .table-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 2rem;
+            overflow-x: auto;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: #2e7d32;
+            color: white;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid #2e7d32;
+            color: #2e7d32;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .sort-icon {
+            margin-left: 5px;
+            opacity: 0.5;
+        }
+
+        th.active-sort .sort-icon {
+            opacity: 1;
+        }
+
+        th[data-sort] {
+            cursor: pointer;
+        }
+
+        th[data-sort]:hover {
+            background: #1b5e20;
+        }
+
+        .emp-id, .payroll-id {
+            font-family: monospace;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+        }
+        
+        .emp-id {
+            background: #2e7d32;
+        }
+        
+        .payroll-id {
+            background: #1976d2;
+        }
+
+        @media (max-width: 768px) {
+            .content-wrapper {
+                margin-left: 70px;
+                padding: 1rem;
+                width: calc(100% - 70px);
+            }
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .filters-container {
+                flex-direction: column;
+            }
+            .filter-group {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <?php include '../includes/sidebar.php'; ?>
+
+    <div class="main-area">
+        <?php include '../includes/header.php'; ?>
+
+        <section class="content">
+            <div class="content-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="background: #e8f5e9; width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                            <i class="fas fa-file-invoice-dollar" style="font-size: 1.2rem; color: #2e7d32;"></i>
+                        </div>
+                        <h2 style="margin: 0; color: #1b5e20;">Payroll Reports</h2>
+                    </div>
+
+                    <div class="export-buttons" style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-sm hover-lift" onclick="exportReport('excel')" style="background: #1d6f42; color: white; font-size: 0.875rem; padding: 0.4rem 0.8rem;">
+                            <i class="fas fa-file-excel"></i> Excel
+                        </button>
+                        <button class="btn btn-sm hover-lift" onclick="exportReport('pdf')" style="background: #dc3545; color: white; font-size: 0.875rem; padding: 0.4rem 0.8rem;">
+                            <i class="fas fa-file-pdf"></i> PDF
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th><i class="fas fa-id-card"></i> Employee ID</th>
+                                <th><i class="fas fa-user"></i> Name</th>
+                                <th><i class="fas fa-building"></i> Department</th>
+                                <th><i class="fas fa-briefcase"></i> Position</th>
+                                <th><i class="fas fa-money-bill"></i> Monthly Base Salary</th>
+                                <th><i class="fas fa-clock"></i> Work Hours</th>
+                                <th><i class="fas fa-business-time"></i> Overtime Hours</th>
+                                <th><i class="fas fa-minus-circle"></i> Deductions</th>
+                                <th><i class="fas fa-money-bill-wave"></i> Net Pay</th>
+                                <th><i class="fas fa-calendar"></i> Pay Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php
+                            $payroll_query = "
+                                SELECT 
+                                    p.*,
+                                    e.emp_name,
+                                    e.id as employee_id,
+                                    e.department,
+                                    e.position,
+                                    e.salary as monthly_base_salary,
+                                    p.hours_worked,
+                                    p.overtime_hours,
+                                    p.deductions,
+                                    p.net_pay,
+                                    p.pay_date
+                                FROM payrolls p
+                                JOIN employees e ON p.emp_id = e.id
+                                WHERE p.deleted_at IS NULL
+                                ORDER BY p.pay_date DESC, p.id DESC
+                            ";
+                            
+                            $payroll_result = $conn->query($payroll_query);
+                            
+                            if ($payroll_result && $payroll_result->num_rows > 0):
+                                while($row = $payroll_result->fetch_assoc()):
+                            ?>
+                                <tr>
+                                    <td><span class="emp-id"><?= sprintf('#%03d', $row['employee_id']) ?></span></td>
+                                    <td><?= htmlspecialchars($row['emp_name']) ?></td>
+                                    <td><?= htmlspecialchars($row['department']) ?></td>
+                                    <td><?= htmlspecialchars($row['position']) ?></td>
+                                    <td class="money">₱<?= number_format($row['monthly_base_salary'], 2) ?></td>
+                                    <td><?= $row['hours_worked'] ?></td>
+                                    <td><?= $row['overtime_hours'] ?? '0' ?></td>
+                                    <td class="money">₱<?= number_format($row['deductions'], 2) ?></td>
+                                    <td class="money">₱<?= number_format($row['net_pay'], 2) ?></td>
+                                    <td><?= date('M d, Y', strtotime($row['pay_date'])) ?></td>
+                                </tr>
+                            <?php 
+                                endwhile;
+                            else:
+                            ?>
+                                <tr>
+                                    <td colspan="10" class="no-records">
+                                        <i class="fas fa-info-circle"></i> No payroll records found
+                                    </td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="stat-card">
+                <h4>
+                    <i class="fas fa-users"></i> 
+                    Total Employees
+                </h4>
+                <p><?= number_format($totals['total_employees']) ?></p>
+                <small>For this period</small>
+            </div>
+            <div class="stat-card">
+                <h4>
+                    <i class="fas fa-money-bill-wave"></i> 
+                    Total Payroll
+                </h4>
+                <p>₱<?= number_format($totals['total_payroll'], 2) ?></p>
+                <small>Total disbursement</small>
+            </div>
+            <div class="stat-card">
+                <h4>
+                    <i class="fas fa-chart-line"></i> 
+                    Average Salary
+                </h4>
+                <p>₱<?= number_format($totals['avg_salary'], 2) ?></p>
+                <small>Per employee</small>
+            </div>
+        </div>
+
+        <div class="content-card" style="margin-bottom: 1.5rem;">
+            <div style="background: var(--primary); padding: 1rem; margin: -2rem -2rem 1.5rem -2rem; border-radius: 0.5rem 0.5rem 0 0;">
+                <h3 style="color: #fff; margin: 0; font-size: 1.1rem;">
+                    <i class="fas fa-filter" style="color: #fff;"></i> 
+                    Filter Reports
+                </h3>
+            </div>
+            
+            <form action="" method="GET" class="form-grid">
+                <div class="filter-group">
+                    <label style="color: #333;"><i class="fas fa-calendar" style="color: #333;"></i> Month</label>
+                    <select name="month" class="form-control" onchange="this.form.submit()">
+                        <?php for($i=1; $i<=12; $i++): ?>
+                            <option value="<?=$i?>" <?=$month==$i?'selected':''?>><?=date('F',mktime(0,0,0,$i,1))?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label style="color: #333;"><i class="fas fa-calendar-alt" style="color: #333;"></i> Year</label>
+                    <select name="year" class="form-control" onchange="this.form.submit()">
+                        <?php for($y=2020; $y<=date('Y'); $y++): ?>
+                            <option value="<?=$y?>" <?=$year==$y?'selected':''?>><?=$y?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label style="color: #333;"><i class="fas fa-building" style="color: #333;"></i> Department</label>
+                    <select name="department" class="form-control" onchange="this.form.submit()">
+                        <option value="">All Departments</option>
+                        <?php 
+                        $departments->data_seek(0);
+                        while($d = $departments->fetch_assoc()): ?>
+                            <option value="<?=$d['id']?>" <?=$department==$d['id']?'selected':''?>>
+                                <?=htmlspecialchars($d['department'])?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+            </form>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts" style="margin-top:18px;">
+            <div class="chart-box">
+                <h4><i class="fas fa-chart-bar"></i> Monthly Payroll</h4>
+                <div style="height:180px; position:relative;">
+                    <canvas id="payrollChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-box">
+                <h4><i class="fas fa-chart-pie"></i> Department Distribution</h4>
+                <div style="height:180px; position:relative;">
+                    <canvas id="deptDistChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-box">
+                <h4><i class="fas fa-chart-area"></i> Salary Trends</h4>
+                <div style="height:180px; position:relative;">
+                    <canvas id="salaryTrendChart"></canvas>
+                </div>
+            </div>
+        </div>
+                <tbody>
+                    <?php
+                    // Get the current month payrolls first, then others
+                    // Get current date for comparison
+                    $currentDate = date('Y-m-d');
+                    
+                    $sql = "
+                        SELECT 
+                            p.id as payroll_id,
+                            p.emp_id,
+                            e.emp_name,
+                            d.name as department,
+                            pos.name as position,
+                            p.basic_pay as monthly_salary,
+                            p.hours_worked,
+                            p.overtime_hours,
+                            p.absent_hours,
+                            p.late_minutes,
+                            p.gross_pay,
+                            p.deductions,
+                            p.net_pay,
+                            p.pay_date,
+                            p.pay_date = ? as is_today
+                        FROM payrolls p
+                        JOIN employees e ON p.emp_id = e.id
+                        JOIN departments d ON e.department = d.id
+                        JOIN positions pos ON e.position = pos.id
+                        WHERE MONTH(p.pay_date) = ? AND YEAR(p.pay_date) = ?
+                        " . ($department ? "AND d.id = ?" : "") . "
+                        ORDER BY p.pay_date DESC, p.id DESC";
+
+                    $stmt = $conn->prepare($sql);
+                    
+                    if ($department) {
+                        $stmt->bind_param("siis", $currentDate, $month, $year, $department);
+                    } else {
+                        $stmt->bind_param("sii", $currentDate, $month, $year);
+                    }
+                    
+                    $stmt->execute();
+                    $result = $stmt->get_result();
+
+                    while ($row = $result->fetch_assoc()) {
+                        // Calculate total work hours including overtime
+                        $totalHours = $row['hours_worked'] + $row['overtime_hours'];
+                        
+                        // Format attendance info for tooltip
+                        $attendanceInfo = sprintf(
+                            "Regular: %s hrs\nOvertime: %s hrs\nAbsent: %s hrs\nLate: %s mins",
+                            number_format($row['hours_worked'], 2),
+                            number_format($row['overtime_hours'], 2),
+                            number_format($row['absent_hours'], 2),
+                            number_format($row['late_minutes'], 2)
+                        );
+                        
+                        $rowClass = $row['is_today'] ? ' class="highlight-today"' : '';
+                        echo "<tr{$rowClass}>
+                                <td><span class='payroll-id'>#" . sprintf('%05d', $row['payroll_id']) . "</span></td>
+                                <td><span class='emp-id'>#" . sprintf('%03d', $row['emp_id']) . "</span></td>
+                                <td>" . htmlspecialchars($row['emp_name']) . "</td>
+                                <td>" . htmlspecialchars($row['department']) . "</td>
+                                <td>" . htmlspecialchars($row['position']) . "</td>
+                                <td title='" . htmlspecialchars($attendanceInfo) . "'>" . number_format($totalHours, 2) . " hrs</td>
+                                <td>₱" . number_format($row['monthly_salary'], 2) . "</td>
+                                <td>₱" . number_format($row['gross_pay'], 2) . "</td>
+                                <td>₱" . number_format($row['deductions'], 2) . "</td>
+                                <td>₱" . number_format($row['net_pay'], 2) . "</td>
+                                <td>" . date('M d, Y', strtotime($row['pay_date'])) . "</td>
+                            </tr>";
+                    }
+                    $stmt->close();
+                    ?>
+                </tbody>
+            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <footer class="app-footer">
+                <p>&copy; <?= date('Y') ?> St. Dominic Savio College. All rights reserved.</p>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        // Chart configuration
+        const chartConfig = {
+            responsive: true,
+            maintainAspectRatio: true,
+            animation: {
+                duration: 800,
+                easing: 'easeInOutQuart'
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 10,
+                        usePointStyle: true,
+                        boxWidth: 6,
+                        font: {
+                            size: 11
+                        }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: 8,
+                    titleFont: {
+                        size: 12
+                    },
+                    bodyFont: {
+                        size: 11
+                    },
+                    displayColors: true,
+                    boxWidth: 3
+                }
+            }
+        };
+
+        // Payroll Chart
+        const ctx = document.getElementById('payrollChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
+                datasets: [{
+                    label: 'Net Pay (₱)',
+                    data: <?= json_encode($weeks_data) ?>,
+                    backgroundColor: 'rgba(46,125,50,0.9)',
+                    borderColor: 'rgba(46,125,50,1)',
+                    borderWidth: 1,
+                    borderRadius: 5,
+                    hoverBackgroundColor: 'rgba(46,125,50,1)'
+                }]
+            },
+            options: {
+                ...chartConfig,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            display: true,
+                            drawBorder: false,
+                            color: 'rgba(0,0,0,0.05)'
+                        },
+                        ticks: {
+                            callback: value => '₱' + value.toLocaleString(),
+                            font: {
+                                size: 10
+                            },
+                            maxTicksLimit: 5
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            font: {
+                                size: 10
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Department Distribution Chart
+        const deptCtx = document.getElementById('deptDistChart').getContext('2d');
+        new Chart(deptCtx, {
+            type: 'doughnut',
+            data: {
+                labels: <?= json_encode($deptLabels) ?>,
+                datasets: [{
+                    label: 'Total Payroll',
+                    data: <?= json_encode($deptTotals) ?>,
+                    backgroundColor: [
+                        'rgba(66,165,245,0.9)',
+                        'rgba(102,187,106,0.9)',
+                        'rgba(255,167,38,0.9)',
+                        'rgba(171,71,188,0.9)',
+                        'rgba(41,182,246,0.9)',
+                        'rgba(236,64,122,0.9)'
+                    ],
+                    borderColor: [
+                        '#42a5f5',
+                        '#66bb6a',
+                        '#ffa726',
+                        '#ab47bc',
+                        '#29b6f6',
+                        '#ec407a'
+                    ],
+                    borderWidth: 2,
+                    hoverOffset: 4
+                },
+                {
+                    label: 'Employee Count',
+                    data: <?= json_encode($deptCounts) ?>,
+                    backgroundColor: [
+                        'rgba(66,165,245,0.5)',
+                        'rgba(102,187,106,0.5)',
+                        'rgba(255,167,38,0.5)',
+                        'rgba(171,71,188,0.5)',
+                        'rgba(41,182,246,0.5)',
+                        'rgba(236,64,122,0.5)'
+                    ],
+                    borderColor: [
+                        '#42a5f5',
+                        '#66bb6a',
+                        '#ffa726',
+                        '#ab47bc',
+                        '#29b6f6',
+                        '#ec407a'
+                    ],
+                    borderWidth: 1,
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                ...chartConfig,
+                cutout: '60%',
+                plugins: {
+                    ...chartConfig.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                let value = context.parsed;
+                                if (label === 'Total Payroll') {
+                                    return label + ': ₱' + value.toLocaleString();
+                                } else {
+                                    return label + ': ' + value;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Salary Trend Chart with Overtime and Regular Hours
+        const salaryCtx = document.getElementById('salaryTrendChart').getContext('2d');
+        new Chart(salaryCtx, {
+            type: 'line',
+            data: {
+                labels: <?= json_encode($weeks_labels) ?>,
+                datasets: [{
+                    label: 'Regular Hours',
+                    data: <?= json_encode(array_map(function($d) { return $d - ($weeks_employee_count[$d] ?? 0); }, $weeks_data)) ?>,
+                    backgroundColor: 'rgba(46,125,50,0.1)',
+                    borderColor: 'rgba(46,125,50,1)',
+                    borderWidth: 2,
+                    pointBackgroundColor: 'rgba(46,125,50,1)',
+                    pointBorderColor: '#fff',
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: 'Overtime Hours',
+                    data: <?= json_encode(array_map(function($d) { return $d; }, $weeks_employee_count)) ?>,
+                    backgroundColor: 'rgba(255,167,38,0.1)',
+                    borderColor: 'rgba(255,167,38,1)',
+                    borderWidth: 2,
+                    pointBackgroundColor: 'rgba(255,167,38,1)',
+                    pointBorderColor: '#fff',
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                ...chartConfig,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            display: true,
+                            drawBorder: false,
+                            color: 'rgba(0,0,0,0.05)'
+                        },
+                        ticks: {
+                            callback: value => '₱' + value.toLocaleString(),
+                            font: {
+                                size: 10
+                            },
+                            maxTicksLimit: 5
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            font: {
+                                size: 10
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Filter application
+        function applyFilters() {
+            const month = document.getElementById('monthFilter').value;
+            const year = document.getElementById('yearFilter').value;
+            const dept = document.getElementById('deptFilter').value;
+            window.location.href = `reports.php?month=${month}&year=${year}&department=${encodeURIComponent(dept)}`;
+        }
+
+        // Export functionality
+        function exportReport(type) {
+            const format = type.toUpperCase();
+            showConfirm(`Export Report to ${format}?`, `Are you sure you want to export this report to ${format} format?`)
+                .then((result) => {
+                    if (result.isConfirmed) {
+                        showLoading('Preparing export...');
+                        const form = document.createElement('form');
+                        form.method = 'POST';
+                        form.action = type === 'excel' ? 'export_excel.php' : 'export_reports_pdf.php';
+                        
+                        // Add current filters as hidden inputs
+                        const month = document.querySelector('select[name="month"]').value;
+                        const year = document.querySelector('select[name="year"]').value;
+                        const department = document.querySelector('select[name="department"]').value;
+                        
+                        const inputs = {
+                            'type': 'reports',
+                            'month': month,
+                            'year': year,
+                            'department': department
+                        };
+                        
+                        Object.keys(inputs).forEach(key => {
+                            const input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = key;
+                            input.value = inputs[key];
+                            form.appendChild(input);
+                        });
+                        
+                        document.body.appendChild(form);
+                        form.submit();
+                        
+                        setTimeout(() => {
+                            Swal.close();
+                            showSuccess(`Report exported to ${format} successfully!`);
+                        }, 1500);
+                    }
+                });
+        }
+
+        // Table sorting functionality
+        function sortTable(table, column, asc = true) {
+            const dirModifier = asc ? 1 : -1;
+            const tBody = table.tBodies[0];
+            const rows = Array.from(tBody.querySelectorAll('tr'));
+
+            // Sort rows
+            const sortedRows = rows.sort((a, b) => {
+                let aColText = a.querySelector(`td:nth-child(${column + 1})`).textContent.trim();
+                let bColText = b.querySelector(`td:nth-child(${column + 1})`).textContent.trim();
+
+                // Handle employee ID numbers (remove # and leading zeros)
+                if (column === 0) {
+                    aColText = parseInt(aColText.replace('#', ''));
+                    bColText = parseInt(bColText.replace('#', ''));
+                }
+
+                // Handle currency values
+                if (aColText.startsWith('₱') && bColText.startsWith('₱')) {
+                    aColText = parseFloat(aColText.replace('₱', '').replace(/,/g, ''));
+                    bColText = parseFloat(bColText.replace('₱', '').replace(/,/g, ''));
+                    return (aColText - bColText) * dirModifier;
+                }
+
+                // Handle dates
+                if (column === 5) {
+                    aColText = new Date(aColText).getTime();
+                    bColText = new Date(bColText).getTime();
+                    return (aColText - bColText) * dirModifier;
+                }
+
+                // Default string comparison
+                return aColText.localeCompare(bColText) * dirModifier;
+            });
+
+            // Remove existing rows
+            while (tBody.firstChild) {
+                tBody.removeChild(tBody.firstChild);
+            }
+
+            // Add sorted rows
+            tBody.append(...sortedRows);
+
+            // Update sort icons
+            table.querySelectorAll('th').forEach(th => th.classList.remove('active-sort'));
+            table.querySelector(`th:nth-child(${column + 1})`).classList.add('active-sort');
+        }
+
+        // Add click event listeners to sortable headers
+        document.querySelectorAll('th[data-sort]').forEach(headerCell => {
+            headerCell.addEventListener('click', () => {
+                const table = headerCell.closest('table');
+                const columnIndex = Array.from(headerCell.parentElement.children).indexOf(headerCell);
+                const currentIsAsc = headerCell.classList.contains('active-sort');
+                sortTable(table, columnIndex, !currentIsAsc);
+            });
+        });
+    </script>
+</body>
+</html>

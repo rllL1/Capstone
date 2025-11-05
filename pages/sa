@@ -1,0 +1,585 @@
+<?php
+include '../config/db.php';
+session_start();
+if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
+
+$success_msg = "";
+
+// Fetch all departments
+$departments = $conn->query("SELECT * FROM departments ORDER BY name ASC");
+
+// Add employee
+if (isset($_POST['add_employee'])) {
+  $name = trim($_POST['emp_name']);
+  $position_id = intval($_POST['position']);
+  $dept_id = intval($_POST['department']);
+  $salary = floatval($_POST['salary']);
+  $date_hired = $_POST['date_hired'] ?? date('Y-m-d');
+
+  if ($name && $position_id && $dept_id) {
+    $pos_info = $conn->query("SELECT name FROM positions WHERE id = $position_id")->fetch_assoc();
+    $dept_info = $conn->query("SELECT name FROM departments WHERE id = $dept_id")->fetch_assoc();
+    $pos_name = $pos_info['name'] ?? '';
+    $dept_name = $dept_info['name'] ?? '';
+
+    $stmt = $conn->prepare("INSERT INTO employees (emp_name, position_id, department_id, date_hired) VALUES (?, ?, ?, ?)");
+    $stmt->bind_param("siis", $name, $position_id, $dept_id, $date_hired);
+    $stmt->execute();
+    $stmt->close();
+    $success_msg = "✅ Employee added successfully!";
+  }
+}
+
+// Update employee
+if (isset($_POST['update_employee'])) {
+  $id = intval($_POST['id']);
+  $name = trim($_POST['emp_name']);
+  $position_id = intval($_POST['position']);
+  $dept_id = intval($_POST['department']);
+  $date_hired = $_POST['date_hired'];
+
+  if ($id && $name && $position_id && $dept_id) {
+    // Get position and department info
+    $pos_info = $conn->query("SELECT name, salary FROM positions WHERE id = $position_id")->fetch_assoc();
+    $dept_info = $conn->query("SELECT name FROM departments WHERE id = $dept_id")->fetch_assoc();
+    
+    if ($pos_info && $dept_info) {
+      $stmt = $conn->prepare("UPDATE employees SET emp_name=?, position_id=?, department_id=?, date_hired=? WHERE id=?");
+      $stmt->bind_param("siisi", $name, $position_id, $dept_id, $date_hired, $id);
+      $stmt->execute();
+      $stmt->close();
+      $success_msg = "✏️ Employee updated successfully!";
+    }
+  }
+}
+
+// Delete employee
+if (isset($_GET['delete'])) {
+  $id = intval($_GET['delete']);
+  if ($id) {
+    $conn->query("DELETE FROM employees WHERE id=$id");
+    $success_msg = "🗑️ Employee deleted successfully!";
+  }
+}
+
+// Edit mode
+$edit = null;
+if (isset($_GET['edit'])) {
+  $id = intval($_GET['edit']);
+  if ($id) {
+    $edit = $conn->query("SELECT * FROM employees WHERE id=$id")->fetch_assoc();
+  }
+}
+
+// Search/filter
+$search = trim($_GET['search'] ?? '');
+$filter = trim($_GET['filter'] ?? '');
+$where = "WHERE 1";
+if ($search) {
+  $s = $conn->real_escape_string($search);
+  $where .= " AND (e.emp_name LIKE '%$s%' OR p.name LIKE '%$s%')";
+}
+if ($filter) {
+  $f = $conn->real_escape_string($filter);
+  $where .= " AND d.name = '$f'";
+}
+
+$employees = $conn->query("
+    SELECT e.*, 
+           p.name as position_name,
+           p.salary as position_salary,
+           d.name as department_name
+    FROM employees e
+    LEFT JOIN departments d ON e.department_id = d.id
+    LEFT JOIN positions p ON e.position_id = p.id 
+    $where 
+    ORDER BY e.id DESC
+");
+$total_employees = $conn->query("SELECT COUNT(*) AS total FROM employees")->fetch_assoc()['total'];
+?>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Employees - SDSC Payroll</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+:root {
+  --primary: #1e8f4a;
+  --primary-dark: #166c36;
+  --secondary: #6c757d;
+  --secondary-dark: #545b62;
+  --light: #f8f9fa;
+  --border: #dee2e6;
+  --danger: #dc3545;
+  --danger-dark: #c82333;
+  --info: #17a2b8;
+  --info-dark: #138496;
+  --warning: #ffc107;
+  --warning-dark: #e0a800;
+  --success: #28a745;
+  --success-dark: #218838;
+  --card-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+body { 
+  font-family: "Poppins", sans-serif; 
+  background: var(--light); 
+  margin: 0; 
+  min-height: 100vh;
+}
+
+.alert { 
+  background: #fff; 
+  color: var(--success);
+  padding: 1rem 1.5rem;
+  border-left: 4px solid var(--success);
+  border-radius: 0.375rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--card-shadow);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.content-card { 
+  background: #fff;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  box-shadow: var(--card-shadow);
+  margin-bottom: 1.5rem;
+  transition: box-shadow 0.3s ease;
+}
+
+.content-card:hover {
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.form-grid { 
+  display: grid; 
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+  gap: 1rem; 
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-grid input, 
+.form-grid select { 
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  transition: all 0.2s ease-in-out;
+  font-size: 0.875rem;
+}
+
+.form-grid input:focus,
+.form-grid select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 0.2rem rgba(30, 143, 74, 0.25);
+}
+
+.form-grid input:disabled,
+.form-grid select:disabled {
+  background-color: var(--light);
+  cursor: not-allowed;
+}
+
+.btn { 
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease-in-out;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.btn:hover { 
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.12);
+}
+
+.btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.btn.secondary { 
+  background: var(--secondary);
+}
+
+.btn.secondary:hover { 
+  background: var(--secondary-dark);
+}
+
+.btn.ghost { 
+  background: transparent; 
+  border: 1px solid var(--primary); 
+  color: var(--primary);
+  box-shadow: none;
+}
+
+.btn.ghost:hover { 
+  background: var(--primary); 
+  color: white;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.12);
+}
+
+.btn.small {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.813rem;
+}
+
+.table { 
+  width: 100%; 
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-top: 1rem;
+}
+
+.table th { 
+  background: var(--primary);
+  color: white;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.875rem;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease-in-out;
+}
+
+.table th:first-child {
+  border-top-left-radius: 0.375rem;
+}
+
+.table th:last-child {
+  border-top-right-radius: 0.375rem;
+}
+
+.table td { 
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+}
+
+.table tr:nth-child(even) { 
+  background: var(--light);
+}
+
+.table tr:hover {
+  background-color: rgba(30, 143, 74, 0.05);
+}
+
+.table-info { 
+  font-size: 0.875rem;
+  color: var(--secondary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: var(--light);
+  border-radius: 0.375rem;
+}
+
+.search-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  background: var(--light);
+  padding: 1rem;
+  border-radius: 0.375rem;
+  margin-bottom: 1rem;
+}
+
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.action-link {
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+  color: white;
+  text-decoration: none;
+  transition: all 0.2s ease-in-out;
+  font-size: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.action-link.edit {
+  background: var(--info);
+}
+
+.action-link.edit:hover {
+  background: var(--info-dark);
+}
+
+.action-link.delete {
+  background: var(--danger);
+}
+
+.action-link.delete:hover {
+  background: var(--danger-dark);
+}
+
+.actions-cell {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--secondary);
+  background: var(--light);
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+</style>
+</head>
+<body>
+<?php include '../includes/sidebar.php'; ?>
+<div class="main-area">
+<?php include '../includes/header.php'; ?>
+
+<section class="content">
+  <div class="content-card">
+    <h2><?= $edit ? 'Edit Employee' : 'Add New Employee' ?></h2>
+
+    <?php if ($success_msg): ?>
+      <div class="alert">
+        <i class="fas fa-check-circle"></i>
+        <?= htmlspecialchars($success_msg) ?>
+      </div>
+    <?php endif; ?>
+
+    <form method="POST" class="form-grid" style="margin-top:1rem">
+      <input type="hidden" name="id" value="<?= $edit['id'] ?? '' ?>">
+      
+      <div class="form-group">
+        <label for="emp_name">Full Name</label>
+        <input type="text" id="emp_name" name="emp_name" placeholder="Enter Employee Name" 
+               value="<?= htmlspecialchars($edit['emp_name'] ?? '') ?>" required>
+      </div>
+
+      <div class="form-group">
+        <label for="department">Department</label>
+        <select name="department" id="department" required>
+          <option value="">Select Department</option>
+          <?php
+          mysqli_data_seek($departments, 0);
+          while ($d = $departments->fetch_assoc()):
+            $sel = (isset($edit['department']) && $edit['department'] == $d['name']) ? 'selected' : '';
+            echo "<option value='".htmlspecialchars($d['id'])."' $sel>".htmlspecialchars($d['name'])."</option>";
+          endwhile;
+          ?>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="position">Position</label>
+        <select name="position" id="position" required disabled>
+          <option value="">Select Position</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="salary">Salary (₱)</label>
+        <input type="number" name="salary" id="salary" step="0.01" placeholder="Auto-filled from position" 
+               value="<?= htmlspecialchars($edit['salary'] ?? '') ?>" readonly required>
+      </div>
+
+      <div class="form-group">
+        <label for="date_hired">Date Hired</label>
+        <input type="date" id="date_hired" name="date_hired" 
+               value="<?= htmlspecialchars($edit['date_hired'] ?? date('Y-m-d')) ?>" required>
+      </div>
+
+      <div style="grid-column:1 / -1; display:flex; gap:0.5rem; margin-top:0.5rem;">
+        <button class="btn" type="submit" name="<?= $edit ? 'update_employee' : 'add_employee' ?>">
+          <i class="fas fa-<?= $edit ? 'save' : 'plus' ?>"></i>
+          <?= $edit ? 'Update Employee' : 'Add Employee' ?>
+        </button>
+        <?php if ($edit): ?>
+          <a href="employees.php" class="btn ghost">
+            <i class="fas fa-times"></i> Cancel
+          </a>
+        <?php endif; ?>
+      </div>
+    </form>
+  </div>
+
+  <div class="content-card">
+    <div class="search-toolbar">
+      <form method="GET" class="search-form">
+        <input type="text" name="search" placeholder="Search by name or position..." value="<?= htmlspecialchars($search) ?>" class="form-control">
+        <select name="filter" class="form-control">
+          <option value="">All Departments</option>
+          <?php
+          $departments->data_seek(0);
+          while ($d = $departments->fetch_assoc()):
+            $selected = ($filter == $d['name']) ? 'selected' : '';
+            echo "<option value='".htmlspecialchars($d['name'])."' $selected>".htmlspecialchars($d['name'])."</option>";
+          endwhile;
+          ?>
+        </select>
+        <button type="submit" class="btn small">
+          <i class="fas fa-search"></i> Search
+        </button>
+        <?php if ($search || $filter): ?>
+          <a href="employees.php" class="btn small secondary">
+            <i class="fas fa-times"></i> Clear
+          </a>
+        <?php endif; ?>
+      </form>
+      <div class="table-info">
+        <i class="fas fa-users"></i>
+        Total Employees: <strong><?= $total_employees ?></strong>
+      </div>
+    </div>
+
+    <table class="table">
+      <thead>
+        <tr>
+          <th><i class="fas fa-user"></i> Name</th>
+          <th><i class="fas fa-briefcase"></i> Position</th>
+          <th><i class="fas fa-building"></i> Department</th>
+          <th><i class="fas fa-money-bill-wave"></i> Salary</th>
+          <th><i class="fas fa-calendar-alt"></i> Date Hired</th>
+          <th><i class="fas fa-cog"></i> Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php if ($employees->num_rows): while ($row = $employees->fetch_assoc()): ?>
+          <tr>
+            <td><?= htmlspecialchars($row['emp_name']) ?></td>
+            <td><?= htmlspecialchars($row['position_name']) ?></td>
+            <td><?= htmlspecialchars($row['department_name']) ?></td>
+            <td>₱<?= number_format($row['position_salary'], 2) ?></td>
+            <td><?= htmlspecialchars($row['date_hired']) ?></td>
+            <td class="actions-cell">
+              <a href="employees.php?edit=<?= $row['id'] ?>" class="action-link edit" title="Edit">
+                <i class="fas fa-edit"></i> Edit
+              </a>
+              <a href="employees.php?delete=<?= $row['id'] ?>" 
+                 onclick="return confirm('Are you sure you want to delete this employee?')"
+                 class="action-link delete" title="Delete">
+                <i class="fas fa-trash-alt"></i> Delete
+              </a>
+            </td>
+          </tr>
+        <?php endwhile; else: ?>
+          <tr>
+            <td colspan="6" class="empty-state">
+              <i class="fas fa-folder-open"></i>
+              No employees found
+            </td>
+          </tr>
+        <?php endif; ?>
+      </tbody>
+    </table>
+  </div>
+</section>
+</div>
+
+<script>
+const deptSelect = document.getElementById("department");
+const posSelect = document.getElementById("position");
+const salaryInput = document.getElementById("salary");
+
+function loadPositions(deptId, selectedId = '') {
+  posSelect.disabled = true;
+  posSelect.innerHTML = '<option>Loading...</option>';
+
+  if (!deptId) {
+    posSelect.innerHTML = '<option value="">Select Department First</option>';
+    posSelect.disabled = true;
+    return;
+  }
+
+  fetch(`get_positions.php?department_id=${deptId}`)
+    .then(res => res.json())
+    .then(data => {
+      posSelect.innerHTML = '<option value="">Select Position</option>';
+      
+      if (data.length === 0) {
+        posSelect.innerHTML = '<option value="">No positions available for this department</option>';
+        posSelect.disabled = true;
+        return;
+      }
+
+      data.forEach(pos => {
+        const opt = document.createElement("option");
+        opt.value = pos.id;
+        opt.textContent = pos.name;
+        opt.dataset.salary = pos.salary;
+        if (pos.id.toString() === selectedId.toString()) {
+          opt.selected = true;
+          salaryInput.value = pos.salary;
+        }
+        posSelect.appendChild(opt);
+      });
+      posSelect.disabled = false;
+    })
+    .catch(error => {
+      console.error('Error loading positions:', error);
+      posSelect.innerHTML = '<option value="">Error loading positions</option>';
+      posSelect.disabled = true;
+    });
+}
+
+deptSelect.addEventListener("change", e => {
+  const deptId = e.target.value;
+  if (deptId) {
+    loadPositions(deptId);
+    salaryInput.value = '';
+  } else {
+    posSelect.innerHTML = '<option value="">Select Position</option>';
+    posSelect.disabled = true;
+    salaryInput.value = '';
+  }
+});
+
+posSelect.addEventListener("change", e => {
+  const sel = posSelect.options[posSelect.selectedIndex];
+  salaryInput.value = sel.dataset.salary || '';
+});
+
+<?php if ($edit): ?>
+document.addEventListener('DOMContentLoaded', () => {
+    // Set department
+    const deptId = <?= $edit['department_id'] ?>;
+    if (deptId) {
+        deptSelect.value = deptId;
+        // Load positions and select the current one
+        loadPositions(deptId, '<?= $edit['position_id'] ?>');
+    }
+});
+<?php endif; ?>
+</script>
+
+<?php include '../includes/footer.php'; ?>
+</body>
+</html>

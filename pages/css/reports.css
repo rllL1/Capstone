@@ -1,0 +1,263 @@
+:root {
+    --primary: #1e8f4a;
+    --primary-dark: #166c36;
+    --secondary: #6c757d;
+    --light: #f8f9fa;
+    --border: #dee2e6;
+}
+
+section.content {
+    padding: 1.5rem;
+    flex: 1;
+}
+
+.content-card {
+    background: #fff;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1.5rem;
+    transition: box-shadow 0.3s ease;
+}
+
+.page-title {
+    font-size: 1.5rem;
+    color: #2e7d32;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+    width: 100%;
+}
+
+.stat-card {
+    background: linear-gradient(145deg, #ffffff, #f8f9fa);
+    padding: 24px;
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #e0e0e0;
+    border-left: 4px solid #2e7d32;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    border-color: #2e7d32;
+}
+
+.stat-card h4 {
+    margin: 0;
+    color: #1b5e20;
+    font-weight: 600;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stat-card h4 i {
+    font-size: 1.2rem;
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 10px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(46,125,50,0.15);
+}
+
+.stat-card p {
+    margin: 15px 0 5px;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1b5e20;
+    text-shadow: 1px 1px 0 rgba(255,255,255,0.8);
+}
+
+.stat-card small {
+    font-size: 0.9rem;
+    color: #66bb6a;
+    font-weight: 500;
+    display: block;
+    margin-top: 5px;
+}
+
+.table-container {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 2rem;
+    overflow-x: auto;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+}
+
+.table th {
+    background: #2e7d32;
+    color: white;
+    padding: 15px;
+    text-align: left;
+    font-weight: 600;
+}
+
+.table td {
+    padding: 12px 15px;
+    border-bottom: 1px solid #e9ecef;
+    vertical-align: middle;
+}
+
+.table tr:hover {
+    background: #f5f5f5;
+}
+
+.emp-id, .payroll-id {
+    font-family: monospace;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+
+.emp-id {
+    background: #2e7d32;
+}
+
+.payroll-id {
+    background: #1976d2;
+}
+
+.money {
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    text-align: right;
+}
+
+.no-records {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+    font-style: italic;
+}
+
+.export-button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.export-button.excel {
+    background: #1d6f42;
+}
+
+.export-button.pdf {
+    background: #dc3545;
+}
+
+.export-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.filters-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-group label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.filter-group select {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    width: 100%;
+}
+
+.charts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin: 1.5rem 0;
+}
+
+.chart-box {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border: 1px solid #e8f5e9;
+}
+
+.chart-box h4 {
+    margin: 0 0 1rem;
+    color: #1b5e20;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.chart-box h4 i {
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 8px;
+    border-radius: 8px;
+}
+
+@media (max-width: 768px) {
+    .stats-grid,
+    .filters-container,
+    .charts {
+        grid-template-columns: 1fr;
+    }
+
+    .table-container {
+        margin: 0 -15px;
+        width: calc(100% + 30px);
+        border-radius: 0;
+    }
+
+    .export-buttons {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+}

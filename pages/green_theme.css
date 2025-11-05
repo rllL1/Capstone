@@ -1,0 +1,50 @@
+/* Green background with white text styles */
+.section-title,
+.form-group label i[class*="fa-"],
+.breakdown-item span:last-child,
+.deduction-display,
+.btn-primary,
+.info-box,
+.table th {
+    color: white !important;
+}
+
+.section-title i,
+.form-group label i[class*="fa-"],
+.breakdown-item span:last-child,
+.deduction-display,
+.btn-primary,
+.info-box {
+    background-color: #2e7d32 !important;
+}
+
+.table th {
+    background: linear-gradient(135deg, #2e7d32, #1b5e20) !important;
+}
+
+/* Success message styling */
+.success-message {
+    background-color: #2e7d32 !important;
+    color: white !important;
+}
+
+.success-message i,
+.success-message a {
+    color: white !important;
+}
+
+/* Button hover effects */
+.btn-primary:hover {
+    background-color: #1b5e20 !important;
+}
+
+/* Info box icon */
+.info-box i {
+    color: white !important;
+}
+
+/* Dropdown hover effects */
+.form-select option:hover {
+    background-color: #2e7d32 !important;
+    color: white !important;
+}
